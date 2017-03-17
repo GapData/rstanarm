@@ -29,7 +29,7 @@
 #' @import Rcpp
 #' @import bayesplot
 #' @import rstantools
-#' @export log_lik posterior_linpred posterior_predict posterior_interval predictive_interval predictive_error prior_summary loo_linpred loo_predict
+#' @export log_lik posterior_linpred posterior_predict posterior_interval predictive_interval predictive_error prior_summary loo_linpred loo_predict loo_pit
 #' @export loo waic
 #' @export launch_shinystan
 #' 
