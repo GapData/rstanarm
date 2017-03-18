@@ -8,14 +8,23 @@
 #' @param lw An optional matrix of (smoothed) log-weights. If \code{lw} is 
 #'   missing then \code{\link[loo]{psislw}} is executed internally, which may be
 #'   time consuming for large amounts of data.
-#' @param type The type of expectation to compute. Currently the options are
-#'   \code{"mean"} and \code{"var"} (variance).
 #' @param ... Optional arguments passed to \code{\link[loo]{psislw}} if 
 #'   \code{lw} is not specified.
+#' @inheritParams loo::loo_expectation
 #'   
-#' @return \code{loo_predictive_interval} returns a matrix with one row per
-#'   observation and two columns. The other functions return a vector with one
-#'   element per observation.
+#' @return \code{loo_predict} and \code{loo_linpred}
+#'   return a vector with one element per observation. The only exception
+#'   is if \code{type="quantile"} and \code{length(probs) >= 2}, in which case
+#'   a separate vector for each element of \code{probs} is computed and they are 
+#'   returned in a matrix with \code{length(probs)} rows.
+#'   
+#'   \code{loo_predictive_interval} returns a matrix with one row per 
+#'   observation and two columns. \code{loo_predictive_interval(..., prob = p)} 
+#'   is equivalent to \code{loo_predict(..., type = "quantile", probs = c(a,
+#'   1-a))} with \code{a = (1 - p)/2}, except it transposes the result and adds
+#'   informative column names.
+#'   
+#'   \code{loo_pit} returns a vector with one element per observation. 
 #' 
 #' @examples
 #' # data from help("lm")
@@ -26,8 +35,7 @@
 #'   group = gl(2, 10, 20, labels = c("Ctl","Trt"))
 #' ) 
 #' fit <- stan_glm(weight ~ group, data = d)
-#' loo_predictive_interval(fit, prob = 0.8)
-#' 
+#' head(loo_predictive_interval(fit, prob = 0.8))
 #' 
 loo_predict.stanreg <-
   function(object, 
@@ -37,34 +45,22 @@ loo_predict.stanreg <-
            ...) {
     
     type <- match.arg(type)
-    wts <- loo_weights(object, lw, ...)
+    lwts <- loo_weights(object, lw, log = TRUE, ...)
     preds <- posterior_predict(object)
     if (is_polr(object) && !is_scobit(object))
       preds <- polr_yrep_to_numeric(preds)
     
-    loo_expectation(preds, wts, type, probs)
+    loo::loo_expectation(
+      x = preds,
+      lw = lwts,
+      type = type,
+      probs = probs
+    )
   }
 
 #' @rdname loo_predict.stanreg
 #' @export
-#' @param prob For \code{loo_predictive_interval}, a scalar in \eqn{(0,1)}
-#'   indicating the desired probability mass to include in the intervals. The
-#'   default is \code{prob=0.9} (\eqn{90}\% intervals).
-loo_predictive_interval.stanreg <- function(object, lw, prob = 0.9, ...) {
-  stopifnot(length(prob) == 1)
-  alpha <- (1 - prob) / 2
-  probs <- c(alpha, 1 - alpha)
-  labs <- paste0(100 * probs, "%")
-  intervals <- loo_predict(object, lw, type = "quantile", probs)
-  rownames(intervals) <- labs
-  t(intervals)
-}
-
-#' @rdname loo_predict.stanreg
-#' @export
 #' @param transform Passed to \code{\link{posterior_linpred}}.
-#' @param probs If \code{type} is \code{"quantile"}, a vector of probabilities
-#'   in \eqn{(0,1)}. Ignored if \code{type} is \code{"mean"} or \code{"var"}.
 #'    
 loo_linpred.stanreg <-
   function(object,
@@ -75,9 +71,14 @@ loo_linpred.stanreg <-
            ...) {
     
     type <- match.arg(type)
-    wts <- loo_weights(object, lw, ...)
+    lwts <- loo_weights(object, lw, log = TRUE, ...)
     linpreds <- posterior_linpred(object, transform = transform)
-    loo_expectation(linpreds, wts, type, probs)
+    loo::loo_expectation(
+      x = linpreds,
+      lw = lwts,
+      type = type,
+      probs = probs
+    )
   }
 
 #' @rdname loo_predict.stanreg
@@ -94,6 +95,22 @@ loo_pit.stanreg <- function(object, lw, ...) {
     y <- y[, 1]
   }
   rstantools::loo_pit(object = yrep, y = y, lw = lw)
+}
+
+
+#' @rdname loo_predict.stanreg
+#' @export
+#' @param prob For \code{loo_predictive_interval}, a scalar in \eqn{(0,1)}
+#'   indicating the desired probability mass to include in the intervals. The
+#'   default is \code{prob=0.9} (\eqn{90}\% intervals).
+loo_predictive_interval.stanreg <- function(object, lw, prob = 0.9, ...) {
+  stopifnot(length(prob) == 1)
+  alpha <- (1 - prob) / 2
+  probs <- c(alpha, 1 - alpha)
+  labs <- paste0(100 * probs, "%")
+  intervals <- loo_predict.stanreg(object, lw, type = "quantile", probs)
+  rownames(intervals) <- labs
+  t(intervals)
 }
 
 # internal ----------------------------------------------------------------
@@ -113,61 +130,4 @@ loo_weights <- function(object, lw, log = FALSE, ...) {
     return(lw) 
   
   exp(lw)
-}
-
-# Compute weighted expectations
-#
-# @param X,W matrices of the same size
-# @param type either "mean", "var", or "quantile"
-# @param probs a vector of probabilities if type="quantile"
-loo_expectation <- function(X, W, type, probs) {
-  stopifnot(identical(dim(X), dim(W)))
-  fun <- switch(type,
-                "mean" = .wmean,
-                "var" = .wvar,
-                "quantile" = .wquant)
-  if (type == "quantile") {
-    stopifnot(all(probs > 0 | probs < 1))
-    formals(fun)[["probs"]] <- probs
-    funval <- numeric(length(probs))
-  } else {
-    funval <- numeric(1)
-  }
-  vapply(seq_len(ncol(X)), function(j) {
-    fun(X[, j], W[, j])
-  }, FUN.VALUE = funval)
-}
-
-
-# loo-weighted mean, variance, and quantiles
-#
-# @param x,w vectors of the same length. this should be checked inside
-#   loo_expectation() before calling these functions.
-# @param probs vector of probabilities.
-#
-.wmean <- function(x, w) {
-  sum(w * x)
-}
-.wvar <- function(x, w) {
-  r <- (x - .wmean(x, w))^2
-  sum(w * r)
-}
-.wquant <- function(x, w, probs) {
-  x <- sort(x)  
-  ww <- cumsum(w)
-  ww <- ww / ww[length(ww)]
-
-  y <- numeric(length(probs))
-  for (j in seq_along(probs)) {
-    ids <- which(ww >= probs[j])
-    wi <- min(ids)
-    if (wi == 1) {
-      y[j] <- x[1]
-    } else {
-      w1 <- ww[wi - 1]
-      x1 <- x[wi - 1]
-      y[j] <- x1 + (x[wi] - x1) * (probs[j] - w1) / (ww[wi] - w1)
-    }
-  }
-  return(y)
 }
