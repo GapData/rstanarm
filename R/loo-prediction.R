@@ -10,7 +10,7 @@
 #'   time consuming for large amounts of data.
 #' @param ... Optional arguments passed to \code{\link[loo]{psislw}} if 
 #'   \code{lw} is not specified.
-#' @inheritParams loo::loo_expectation
+#' @inheritParams loo::E_loo
 #'   
 #' @return \code{loo_predict} and \code{loo_linpred}
 #'   return a vector with one element per observation. The only exception
@@ -50,7 +50,7 @@ loo_predict.stanreg <-
     if (is_polr(object) && !is_scobit(object))
       preds <- polr_yrep_to_numeric(preds)
     
-    loo::loo_expectation(
+    loo::E_loo(
       x = preds,
       lw = lwts,
       type = type,
@@ -73,7 +73,7 @@ loo_linpred.stanreg <-
     type <- match.arg(type)
     lwts <- loo_weights(object, lw, log = TRUE, ...)
     linpreds <- posterior_linpred(object, transform = transform)
-    loo::loo_expectation(
+    loo::E_loo(
       x = linpreds,
       lw = lwts,
       type = type,
